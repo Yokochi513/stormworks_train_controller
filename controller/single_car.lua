@@ -4,7 +4,7 @@
 --              [5]マスター要求, [6]パーキングブレーキ, [7]バック
 -- 出力 Number: [1]スロットル(-1~1), [2]ブレーキ(0-1)
 -- 出力 Bool:   [1]右ドア, [2]左ドア, [3]室内ライト, [4]スポット,
---              [5]テールライト, [6]パーキングブレーキ
+--              [5]テールライト
 
 local is_master  = false
 local is_reverse = false
@@ -77,6 +77,12 @@ function onTick()
         brake    = 1.0
     end
 
+    -- REQ-T05: PB ON時はブレーキを1.0に固定
+    if park_brake then
+        throttle = 0.0
+        brake    = 1.0
+    end
+
     output.setNumber(1, throttle)
     output.setNumber(2, brake)
     output.setBool(1, door_right)
@@ -84,7 +90,6 @@ function onTick()
     output.setBool(3, light_int)
     output.setBool(4, light_spot)
     output.setBool(5, not is_master)  -- REQ-L03: 非マスター時テールライト点灯
-    output.setBool(6, park_brake)
 
     disp_throttle = throttle
     disp_brake    = brake
