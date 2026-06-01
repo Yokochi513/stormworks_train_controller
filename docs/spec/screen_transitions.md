@@ -33,7 +33,8 @@
 | NO_MASTER → TAB_MASTER | TAB のマスターリクエストボタン ON |
 | TA_MASTER → TAB_MASTER | TAB のマスターリクエストボタン ON |
 | TAB_MASTER → TA_MASTER | TA のマスターリクエストボタン ON |
-| TA_MASTER → NO_MASTER | （未定義 — マスター保持を継続） |
+| TA_MASTER → NO_MASTER | TA のマスターリクエストボタン ON |
+| TAB_MASTER → NO_MASTER | TAB のマスターリクエストボタン ON |
 
 ### 2.2 ドア状態インジケータ
 
