@@ -6,28 +6,28 @@
 -- 出力 Bool:   [1]右ドア, [2]左ドア, [3]室内ライト, [4]スポット,
 --              [5]テールライト, [6]パーキングブレーキ
 
-is_master  = false
-is_reverse = false
-door_right = false
-door_left  = false
-light_int  = false
-light_spot = false
-park_brake = false
+local is_master  = false
+local is_reverse = false
+local door_right = false
+local door_left  = false
+local light_int  = false
+local light_spot = false
+local park_brake = false
 
-prev_dr  = false
-prev_dl  = false
-prev_li  = false
-prev_sp  = false
-prev_mst = false
-prev_pk  = false
-prev_rev = false
+local prev_dr  = false
+local prev_dl  = false
+local prev_li  = false
+local prev_sp  = false
+local prev_mst = false
+local prev_pk  = false
+local prev_rev = false
 
-disp_throttle = 0.0
-disp_brake    = 0.0
+local disp_throttle = 0.0
+local disp_brake    = 0.0
 
-function rising(cur, prev) return cur and not prev end
+local function rising(cur, prev) return cur and not prev end
 
-function drawIndicator(x, y, label, active, r, g, b)
+local function drawIndicator(x, y, label, active, r, g, b)
     screen.setColor(220, 220, 220)
     screen.drawText(x, y, label)
     if active then
@@ -40,16 +40,16 @@ function drawIndicator(x, y, label, active, r, g, b)
 end
 
 function onTick()
-    thr_in = input.getNumber(1)
-    brk_in = input.getNumber(2)
+    local thr_in = input.getNumber(1)
+    local brk_in = input.getNumber(2)
 
-    b_dr  = input.getBool(1)
-    b_dl  = input.getBool(2)
-    b_li  = input.getBool(3)
-    b_sp  = input.getBool(4)
-    b_mst = input.getBool(5)
-    b_pk  = input.getBool(6)
-    b_rev = input.getBool(7)
+    local b_dr  = input.getBool(1)
+    local b_dl  = input.getBool(2)
+    local b_li  = input.getBool(3)
+    local b_sp  = input.getBool(4)
+    local b_mst = input.getBool(5)
+    local b_pk  = input.getBool(6)
+    local b_rev = input.getBool(7)
 
     if rising(b_dr,  prev_dr)  then door_right = not door_right end
     if rising(b_dl,  prev_dl)  then door_left  = not door_left  end
@@ -67,7 +67,7 @@ function onTick()
     prev_pk  = b_pk
     prev_rev = b_rev
 
-    throttle, brake
+    local throttle, brake
     if is_master then
         throttle = thr_in * (is_reverse and -1 or 1)
         brake    = brk_in
@@ -112,11 +112,11 @@ function onDraw()
     screen.drawLine(1, 17, 12, 17)
 
     if disp_throttle > 0 then
-        bh = math.floor(disp_throttle * 9)
+        local bh = math.floor(disp_throttle * 9)
         screen.setColor(80, 200, 80)
         screen.drawRectF(1, 17 - bh, 12, bh)
     elseif disp_throttle < 0 then
-        bh = math.floor(-disp_throttle * 9)
+        local bh = math.floor(-disp_throttle * 9)
         screen.setColor(80, 120, 220)
         screen.drawRectF(1, 18, 12, bh)
     end
@@ -137,7 +137,7 @@ function onDraw()
     screen.drawRectF(33, 8, 12, 20)
 
     if disp_brake > 0 then
-        bh = math.floor(disp_brake * 20)
+        local bh = math.floor(disp_brake * 20)
         screen.setColor(220, 80, 80)
         screen.drawRectF(33, 28 - bh, 12, bh)
     end
