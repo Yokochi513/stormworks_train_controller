@@ -78,12 +78,9 @@ function onTick()
 
     local own_dir = IS_TA   -- 自車の前進方向 (TA前=true / TAB前=false)
 
-    -- REQ-M04: 反対方向のマスターを受信したら自分のマスターを解除
-    if HAS_CAB and local_master then
-        if (in_f.present and in_f.dir ~= own_dir)
-            or (in_r.present and in_r.dir ~= own_dir) then
-            local_master = false
-        end
+    -- REQ-M04: 解除要求パルス(req)を受信したらマスターを解除
+    if HAS_CAB and local_master and (in_f.req or in_r.req) then
+        local_master = false
     end
 
     -- --- ボタン立ち上がり処理 (運転台車のみマスター取得可) ---
@@ -95,6 +92,7 @@ function onTick()
     local b_pk  = input.getBool(6)
     local b_rev = input.getBool(7)
 
+    local release_pulse = false                 -- 取得tickのみ true
     if HAS_CAB then
         if rising(b_dr,  prev_dr)  then door_right = not door_right end
         if rising(b_dl,  prev_dl)  then door_left  = not door_left  end
@@ -105,8 +103,9 @@ function onTick()
 
         if rising(b_mst, prev_mst) then
             if not local_master then
-                -- REQ-M02/M03: マスター取得
+                -- REQ-M02/M03: マスター取得＋解除要求を他運転台へ伝播
                 local_master = true
+                release_pulse = true
                 -- REQ-M05: 現在の出力状態を引き継ぐ (TAB は左右が TA 基準と反転)
                 if IS_TA then
                     door_right, door_left = applied_R, applied_L
@@ -135,7 +134,7 @@ function onTick()
             brk = 1.0                               -- PB自体ではなくブレーキ1.0を伝播
         end
         auth = {
-            present = true, dir = own_dir, req = true,
+            present = true, dir = own_dir,
             throttle = thr, brake = brk,
             doorR = door_right, doorL = door_left,  -- マスター基準(自車基準)
             light = light_int, spot = light_spot,
@@ -188,6 +187,9 @@ function onTick()
         local rm = math.max(base, in_f.marker or 0)
         writeConn(F_N, F_B, auth, fm)
         writeConn(R_N, R_B, auth, rm)
+        -- 解除要求(req): TB中継+運転台が列車側へ注入 (REQ-M06)
+        output.setBool(F_B + 1, in_r.req or (release_pulse and IS_TAB))
+        output.setBool(R_B + 1, in_f.req or (release_pulse and IS_TA))
     end
 
     -- --- 表示チップ(car_display.lua)向けメタ情報 ---
