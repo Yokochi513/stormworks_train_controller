@@ -34,13 +34,13 @@ tools: Read, Glob, Grep, Write
 - 既存の `controller/*.lua` — 既に実装済みの機能・命名・チャンネル割り当て規律。**既存を壊さない／重複実装しない**ため。
 - 画面が絡むなら `docs/spec/ui_design.md` / `screen_transitions.md`。
 
-どのマイコン（ファイル）を対象にするか（例: `single_car.lua` か `car.lua` か、requirements.md のどのフェーズか）を最初に確定する。曖昧なら呼び出し元に確認する。
+どのマイコン（ファイル）を対象にするか（例: `single_car.lua` か `car_logic.lua` か、requirements.md のどのフェーズか）を最初に確定する。曖昧なら呼び出し元に確認する。なお 1 マイコンが 8192 バイト上限を超える場合は複数チップへの分割も検討する（例: `car_logic.lua` ＋ `car_display.lua`）。
 
 ### 2. 機能分解
 
 設計を `stormworks-feature` が 1 回で作れる粒度の「機能」に割る。各機能は**単一責務・独立テスト可能**。EARS 要件 `REQ-xxx` を機能へマッピングし、**取りこぼし・重複が無いこと**を要件 ID で確認する。
 
-機能の例（car.lua の場合）: 車種判定、ローカル入力読取、ボタン立ち上がり/トグル群、マスター取得・排他、マスター/命令の車間送受信・中継、方向マーカー判定、スロットル逆転、パーキングブレーキ、ドア左右マッピング、ライト/テールライト、モニタ描画 など。
+機能の例（`car_logic.lua` の場合）: 車種判定、ローカル入力読取、ボタン立ち上がり/トグル群、マスター取得・排他、マスター/命令の車間送受信・中継、方向マーカー判定、スロットル逆転、パーキングブレーキ、ドア左右マッピング、ライト/テールライト、（表示は `car_display.lua` として別チップ）など。
 
 ### 3. 全体マップ作成
 
@@ -94,7 +94,7 @@ tools: Read, Glob, Grep, Write
 ## 出力ファイル仕様
 
 **配置・命名:** `docs/spec/feature_dispatch_<対象>.md`
-（例: `car.lua` を対象にするなら `docs/spec/feature_dispatch_car.md`、フェーズ1の一両車なら `docs/spec/feature_dispatch_single_car.md`）。
+（例: `car_logic.lua` を対象にするなら `docs/spec/feature_dispatch_car_logic.md`、フェーズ1の一両車なら `docs/spec/feature_dispatch_single_car.md`）。
 同じ対象の計画が既にある場合は新規作成せず、その**ファイルを更新**する（進捗を引き継ぐため）。
 
 **自己完結の原則:** このファイルは**それ単体で完結**していなければならない。読み手（人間でも、文脈ゼロの別 AI セッションでも）が requirements.md やこの会話を読まなくても、発注を実行できるだけの情報を必ず含める。参照する要件は ID だけでなく要旨も書き写す。

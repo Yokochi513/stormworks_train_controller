@@ -252,7 +252,7 @@ TA/TAB 車の運転台から読み込むコンポジット入力。
 
 ### フェーズ2: 車間通信・マスター伝播
 
-- `controller/car.lua` — TA/TB/TAB 汎用マイコン
+- `controller/car_logic.lua` ＋ `controller/car_display.lua` — TA/TB/TAB 汎用マイコン（8192バイト制約のためロジックと表示を2マイコンに分割）
 - 車間通信プロトコル実装
 - マスター要求・解除の伝播
 - 命令中継ロジック
