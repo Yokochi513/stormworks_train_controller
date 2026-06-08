@@ -3,8 +3,10 @@
 -- 設計 docs/spec/design.md §6.1-6.5。全車同一ソース、プロパティで分岐。
 
 -- 連結プロトコル 前F=1-16 / 後B=17-32（§5.4）
-local F = {link=1,  athr=2,  abrk=3,  mp=1,  sgff=2,  ebrk=3,  dr=4,  dl=5,  room=6,  spot=7,  fr=8,  lv=1}
-local B = {link=17, athr=18, abrk=19, mp=17, sgff=18, ebrk=19, dr=20, dl=21, room=22, spot=23, fr=24, lv=-1}
+-- マスター調停＝優先度フラッド：prio=取得順優先度（後取得ほど大）, live=生存ホップ（中継毎 -1, 0 で消滅）。
+--   マスター在で live を毎ティック満タン再供給し、不在になれば live 減衰で claim が自己消滅する（誤滞留しない）。
+local F = {link=1,  prio=4,  live=5,  athr=2,  abrk=3,  mp=1,  sgff=2,  ebrk=3,  dr=4,  dl=5,  room=6,  spot=7,  lv=1}
+local B = {link=17, prio=20, live=21, athr=18, abrk=19, mp=17, sgff=18, ebrk=19, dr=20, dl=21, room=22, spot=23, lv=-1}
 
 -- 運転手入力（空きch）N:9,10  B:9-15
 local IN_THR,IN_BRK = 9,10
@@ -16,12 +18,13 @@ local CB_THR,CB_BRK = 11,12
 local CB_MP,CB_GFFV,CB_GFF,CB_CAB,CB_FEND,CB_REND,CB_EBRK,CB_DGR = 9,10,11,12,13,14,15,16
 local CB_DGL,CB_ROOM,CB_SPOT,CB_LRD,CB_LLD,CB_LRM,CB_ISM,CB_BACK = 25,26,27,28,29,30,31,32
 
-local WIN,MAX_HOP = 8,32
+local HOPS = 40        -- 生存ホップ上限（最大編成長以上）。マスター在で毎ティック満タンに再供給
 
 -- 保持状態
 local inited=false
 local has_fc,has_bc = false,false
 local car_type,is_cab = "TB",false
+local cab_bias=0       -- 同レベル取得時の TA/TAB タイブレーク（M1 設定）
 local prev_rdoor,tgl_rdoor=false,false
 local prev_ldoor,tgl_ldoor=false,false
 local prev_room, tgl_room =false,false
@@ -31,14 +34,12 @@ local prev_back, tgl_back =false,false
 local prev_spot, tgl_spot =false,false
 local prev_tgl_req=false
 local front_connected,back_connected=false,false
-local prev_fconn,prev_bconn=false,false
 local front_aligned,back_aligned=false,false
 local is_master=false
-local acquire_window=0
+local own_prio=0       -- 自車マスター時の優先度（取得順で単調増加, 0=非マスター）
 local master_present=false
 local gff,gff_valid=true,false
 local is_front_end,is_rear_end=false,false
-local fr_ttl=0
 
 local function et(raw,prev,tgl)            -- push 立ち上がりでトグル
   if raw and not prev then tgl=not tgl end
@@ -49,23 +50,23 @@ local function read_frame(f)
   local link=input.getNumber(f.link)
   return {
     link=link, connected=math.abs(link)>0.5,
+    prio=input.getNumber(f.prio), live=input.getNumber(f.live),
     master_present=input.getBool(f.mp), sender_gff=input.getBool(f.sgff),
     auth_throttle=input.getNumber(f.athr), auth_brake=input.getNumber(f.abrk),
     emergency_brake=input.getBool(f.ebrk),
     door_g_right=input.getBool(f.dr), door_g_left=input.getBool(f.dl),
     room_light=input.getBool(f.room), spot_on=input.getBool(f.spot),
-    force_release=input.getBool(f.fr),
   }
 end
 
-local function write_frame(f,p)            -- link=送信元符号 + パケット
+local function write_frame(f,p,prio,live)  -- link=向き符号 / prio,live=マスター優先度フラッド
   output.setNumber(f.link,f.lv)
+  output.setNumber(f.prio,prio); output.setNumber(f.live,live)
   output.setNumber(f.athr,p.auth_throttle); output.setNumber(f.abrk,p.auth_brake)
   output.setBool(f.mp,p.master_present); output.setBool(f.sgff,p.sender_gff)
   output.setBool(f.ebrk,p.emergency_brake)
   output.setBool(f.dr,p.door_g_right); output.setBool(f.dl,p.door_g_left)
   output.setBool(f.room,p.room_light); output.setBool(f.spot,p.spot_on)
-  output.setBool(f.fr,p.force_release)
 end
 
 function onTick()
@@ -79,6 +80,7 @@ function onTick()
     elseif has_bc and not has_fc then car_type="TAB"
     elseif has_fc and has_bc then car_type="DEAD"
     else car_type="TB" end
+    cab_bias=(car_type=="TA") and 0.3 or 0.6   -- 同レベル取得時の TA/TAB 一意化
   end
 
   -- M2 push トグル化
@@ -101,28 +103,36 @@ function onTick()
   front_connected,back_connected=rxf.connected,rxb.connected
   front_aligned=front_connected and (rxf.link<0)   -- 前で受け隣の後(-1)→整列
   back_aligned =back_connected  and (rxb.link>0)    -- 後で受け隣の前(+1)→整列
+  -- 隣から伝播してきたマスター claim（live>0 のみ生存＝有効）
+  local f_alive=front_connected and rxf.live>0.5 and rxf.prio>0
+  local b_alive=back_connected  and rxb.live>0.5 and rxb.prio>0
 
-  -- M4 マスター調停
-  local emitted=false
+  -- M4 マスター調停（優先度フラッド：後取得が高優先・最高優先のみ生存・誤滞留は live で自己消滅）
+  -- 隣接からの最有力（生存）マスター claim を選ぶ（同値なら前優先）
+  local in_prio,in_live,in_front=0,0,false
+  if f_alive then in_prio,in_live,in_front=rxf.prio,rxf.live,true end
+  if b_alive and rxb.prio>in_prio then in_prio,in_live,in_front=rxb.prio,rxb.live,false end
+
   if is_cab then
-    if tgl_req and not prev_tgl_req then            -- 取得
-      is_master=true; emitted=true; acquire_window=WIN
-    elseif (not tgl_req) and prev_tgl_req then      -- 解放
-      is_master=false
+    if tgl_req and not prev_tgl_req then              -- 取得：現編成の最高優先の一段上を採番
+      is_master=true
+      own_prio=math.floor(in_prio+1e-6)+1+cab_bias    -- 「後から取得が勝つ」＋TA/TABタイブレーク
+    elseif (not tgl_req) and prev_tgl_req then        -- 解放
+      is_master=false; own_prio=0
     end
   end
-  local new_conn=(front_connected and not prev_fconn) or (back_connected and not prev_bconn)
-  if is_cab and new_conn then emitted=true end      -- 運転台付き新規連結→既存解放
-  local rx_fr=rxf.force_release or rxb.force_release
-  if rx_fr and is_master and acquire_window==0 then -- 横取りで降格
-    is_master=false; tgl_req=false                  -- 再取得は OFF→ON 必須
+  if is_master and in_prio>own_prio+1e-6 then         -- より高優先のマスター在→降格（自分の反射は同値で降りない）
+    is_master=false; own_prio=0; tgl_req=false        -- 横取り後の再取得は OFF→ON 必須
   end
-  if emitted then fr_ttl=MAX_HOP
-  elseif rx_fr and fr_ttl==0 then fr_ttl=MAX_HOP end
-  local fr_out=(fr_ttl>0)
-  if fr_ttl>0 then fr_ttl=fr_ttl-1 end
-  acquire_window=math.max(0,acquire_window-1)
-  master_present=is_master or rxf.master_present or rxb.master_present
+
+  -- 自車から両側へ流すフラッド値（マスター=満タン再供給 / 中継=live を1減衰 / 尽きたら消滅）
+  local out_prio,out_live
+  if is_master then out_prio,out_live=own_prio,HOPS
+  elseif in_prio>0 and in_live>1 then out_prio,out_live=in_prio,in_live-1
+  else out_prio,out_live=0,0 end
+  master_present=is_master or out_prio>0
+  -- 指令パケットを取り込む側（生存マスターが来ている側）
+  local src=(not is_master) and (in_front and rxf or rxb) or nil
 
   -- M5 GFF 導出 ★中核★
   if car_type=="DEAD" then
@@ -130,11 +140,11 @@ function onTick()
   elseif is_master then
     if car_type=="TA" then gff=not tgl_back else gff=tgl_back end
     gff_valid=true
+  elseif master_present and src then
+    local al=in_front and front_aligned or back_aligned
+    gff=(src.sender_gff==al); gff_valid=true
   else
-    local got,s_gff,al=false,false,false
-    if rxb.master_present then got,s_gff,al=true,rxb.sender_gff,back_aligned end
-    if rxf.master_present then got,s_gff,al=true,rxf.sender_gff,front_aligned end  -- 前優先
-    if got then gff=(s_gff==al); gff_valid=true else gff_valid=false end
+    gff_valid=false
   end
   is_front_end=(gff and not front_connected) or ((not gff) and not back_connected)
   is_rear_end =(gff and not back_connected)  or ((not gff) and not front_connected)
@@ -142,27 +152,28 @@ function onTick()
   -- M6 指令パケット生成・中継
   local p
   if car_type=="DEAD" then
-    write_frame(F,rxb); write_frame(B,rxf)          -- クロス中継
+    -- クロス中継（優先度フラッドも交差して通過）
+    write_frame(F,rxb, b_alive and rxb.prio or 0, b_alive and rxb.live-1 or 0)
+    write_frame(B,rxf, f_alive and rxf.prio or 0, f_alive and rxf.live-1 or 0)
   else
     if is_master then
       local ebrk=tgl_ebrk
       p={master_present=true,sender_gff=gff,
          auth_throttle=ebrk and 0 or throttle_input, auth_brake=brake_input,
          emergency_brake=ebrk, door_g_right=tgl_rdoor, door_g_left=tgl_ldoor,
-         room_light=tgl_room, spot_on=tgl_spot, force_release=fr_out}
-    elseif master_present then
-      local src=rxf.master_present and rxf or rxb   -- 前優先
+         room_light=tgl_room, spot_on=tgl_spot}
+    elseif master_present and src then
       p={master_present=true,sender_gff=gff,
          auth_throttle=src.auth_throttle, auth_brake=src.auth_brake,
          emergency_brake=src.emergency_brake, door_g_right=src.door_g_right,
          door_g_left=src.door_g_left, room_light=src.room_light,
-         spot_on=src.spot_on, force_release=fr_out}
+         spot_on=src.spot_on}
     else
       p={master_present=false,sender_gff=gff, auth_throttle=0,auth_brake=0,
          emergency_brake=false, door_g_right=false,door_g_left=false,
-         room_light=false,spot_on=false, force_release=fr_out}
+         room_light=false,spot_on=false}
     end
-    write_frame(F,p); write_frame(B,p)
+    write_frame(F,p,out_prio,out_live); write_frame(B,p,out_prio,out_live)
   end
 
   -- コマンド/表示バスへ出力
@@ -178,9 +189,6 @@ function onTick()
   output.setBool(CB_LRD,tgl_rdoor); output.setBool(CB_LLD,tgl_ldoor); output.setBool(CB_LRM,tgl_room)
   output.setBool(CB_ISM,is_master); output.setBool(CB_BACK,tgl_back)
 
-  -- 立ち上がり検出用の前ティック状態を更新（取得/連結を1ティックのエッジに限定）
-  -- ※ここを更新しないと毎ティック取得が再発火し acquire_window が降りず、
-  --   force_release 相互降格が働かずマスターが複数並存する。
+  -- 立ち上がり検出用の前ティック状態を更新（取得/解放を OFF→ON / ON→OFF の1ティックに限定）
   prev_tgl_req=tgl_req
-  prev_fconn,prev_bconn=front_connected,back_connected
 end
