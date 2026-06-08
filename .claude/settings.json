@@ -1,18 +1,3 @@
 {
   "enabledMcpjsonServers": ["fetch"],
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; $f = $j.tool_input.file_path; if ($f -like '*.lua') { python 'C:\\workspace\\git\\stormworks_train_controller\\test_lua_max_bite.py' $f; exit $LASTEXITCODE }",
-            "shell": "powershell",
-            "statusMessage": "Luaファイルのサイズをチェック中..."
-          }
-        ]
-      }
-    ]
-  }
 }
