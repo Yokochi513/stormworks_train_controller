@@ -177,4 +177,10 @@ function onTick()
   output.setBool(CB_ROOM,p.room_light); output.setBool(CB_SPOT,p.spot_on)
   output.setBool(CB_LRD,tgl_rdoor); output.setBool(CB_LLD,tgl_ldoor); output.setBool(CB_LRM,tgl_room)
   output.setBool(CB_ISM,is_master); output.setBool(CB_BACK,tgl_back)
+
+  -- 立ち上がり検出用の前ティック状態を更新（取得/連結を1ティックのエッジに限定）
+  -- ※ここを更新しないと毎ティック取得が再発火し acquire_window が降りず、
+  --   force_release 相互降格が働かずマスターが複数並存する。
+  prev_tgl_req=tgl_req
+  prev_fconn,prev_bconn=front_connected,back_connected
 end
