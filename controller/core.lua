@@ -1,10 +1,5 @@
--- 列車コントローラー [1/3] core : 中核ロジック M1〜M6（クリティカルパス）
--- 入力/連結整列/マスター調停/GFF/指令パケット中継。結果をコマンド・表示バスへ出力。
--- 設計 docs/spec/design.md §6.1-6.5。全車同一ソース、プロパティで分岐。
-
--- 連結プロトコル 前F=1-16 / 後B=17-32（§5.4）
--- マスター調停＝優先度フラッド：prio=取得順優先度（後取得ほど大）, live=生存ホップ（中継毎 -1, 0 で消滅）。
---   マスター在で live を毎ティック満タン再供給し、不在になれば live 減衰で claim が自己消滅する（誤滞留しない）。
+-- 列車コントローラー [1/3] core : M1〜M6（design.md §6.1-6.5）
+-- マスター調停＝優先度フラッド: prio=取得順優先度 / live=生存ホップ（§6.4）
 local F = {link=1,  prio=4,  live=5,  athr=2,  abrk=3,  mp=1,  sgff=2,  ebrk=3,  dr=4,  dl=5,  room=6,  spot=7,  lv=1}
 local B = {link=17, prio=20, live=21, athr=18, abrk=19, mp=17, sgff=18, ebrk=19, dr=20, dl=21, room=22, spot=23, lv=-1}
 
@@ -13,18 +8,18 @@ local IN_THR,IN_BRK = 9,10
 local IN_RDOOR,IN_LDOOR,IN_ROOM = 9,10,11
 local IN_REQ,IN_EBRK,IN_BACK,IN_SPOT = 12,13,14,15
 
--- コマンド/表示バス出力（output/display が読む内部コンポジット）
+-- コマンド/表示バス出力
 local CB_THR,CB_BRK = 11,12
 local CB_MP,CB_GFFV,CB_GFF,CB_CAB,CB_FEND,CB_REND,CB_EBRK,CB_DGR = 9,10,11,12,13,14,15,16
 local CB_DGL,CB_ROOM,CB_SPOT,CB_LRD,CB_LLD,CB_LRM,CB_ISM,CB_BACK = 25,26,27,28,29,30,31,32
 
-local HOPS = 40        -- 生存ホップ上限（最大編成長以上）。マスター在で毎ティック満タンに再供給
+local HOPS = 40        -- 生存ホップ上限
 
 -- 保持状態
 local inited=false
 local has_fc,has_bc = false,false
 local car_type,is_cab = "TB",false
-local cab_bias=0       -- 同レベル取得時の TA/TAB タイブレーク（M1 設定）
+local cab_bias=0       -- TA/TAB タイブレーク
 local prev_rdoor,tgl_rdoor=false,false
 local prev_ldoor,tgl_ldoor=false,false
 local prev_room, tgl_room =false,false
@@ -36,7 +31,7 @@ local prev_tgl_req=false
 local front_connected,back_connected=false,false
 local front_aligned,back_aligned=false,false
 local is_master=false
-local own_prio=0       -- 自車マスター時の優先度（取得順で単調増加, 0=非マスター）
+local own_prio=0       -- 優先度（0=非マスター）
 local master_present=false
 local gff,gff_valid=true,false
 local is_front_end,is_rear_end=false,false
@@ -59,7 +54,7 @@ local function read_frame(f)
   }
 end
 
-local function write_frame(f,p,prio,live)  -- link=向き符号 / prio,live=マスター優先度フラッド
+local function write_frame(f,p,prio,live)
   output.setNumber(f.link,f.lv)
   output.setNumber(f.prio,prio); output.setNumber(f.live,live)
   output.setNumber(f.athr,p.auth_throttle); output.setNumber(f.abrk,p.auth_brake)
@@ -80,7 +75,7 @@ function onTick()
     elseif has_bc and not has_fc then car_type="TAB"
     elseif has_fc and has_bc then car_type="DEAD"
     else car_type="TB" end
-    cab_bias=(car_type=="TA") and 0.3 or 0.6   -- 同レベル取得時の TA/TAB 一意化
+    cab_bias=(car_type=="TA") and 0.3 or 0.6
   end
 
   -- M2 push トグル化
@@ -101,37 +96,37 @@ function onTick()
   -- M3 連結受信・整列
   local rxf,rxb=read_frame(F),read_frame(B)
   front_connected,back_connected=rxf.connected,rxb.connected
-  front_aligned=front_connected and (rxf.link<0)   -- 前で受け隣の後(-1)→整列
-  back_aligned =back_connected  and (rxb.link>0)    -- 後で受け隣の前(+1)→整列
-  -- 隣から伝播してきたマスター claim（live>0 のみ生存＝有効）
+  front_aligned=front_connected and (rxf.link<0)
+  back_aligned =back_connected  and (rxb.link>0)
   local f_alive=front_connected and rxf.live>0.5 and rxf.prio>0
   local b_alive=back_connected  and rxb.live>0.5 and rxb.prio>0
 
-  -- M4 マスター調停（優先度フラッド：後取得が高優先・最高優先のみ生存・誤滞留は live で自己消滅）
-  -- 隣接からの最有力（生存）マスター claim を選ぶ（同値なら前優先）
+  -- M4 マスター調停（優先度フラッド）
+  -- claim 選択: prio 優先、同 prio は live 高い側（マスター近い新鮮側／点滅防止）。
   local in_prio,in_live,in_front=0,0,false
   if f_alive then in_prio,in_live,in_front=rxf.prio,rxf.live,true end
-  if b_alive and rxb.prio>in_prio then in_prio,in_live,in_front=rxb.prio,rxb.live,false end
+  if b_alive and (rxb.prio>in_prio or (rxb.prio==in_prio and rxb.live>in_live)) then
+    in_prio,in_live,in_front=rxb.prio,rxb.live,false
+  end
 
   if is_cab then
-    if tgl_req and not prev_tgl_req then              -- 取得：現編成の最高優先の一段上を採番
+    if tgl_req and not prev_tgl_req then              -- 取得：最高優先+1 を採番
       is_master=true
-      own_prio=math.floor(in_prio+1e-6)+1+cab_bias    -- 「後から取得が勝つ」＋TA/TABタイブレーク
+      own_prio=math.floor(in_prio+1e-6)+1+cab_bias
     elseif (not tgl_req) and prev_tgl_req then        -- 解放
       is_master=false; own_prio=0
     end
   end
-  if is_master and in_prio>own_prio+1e-6 then         -- より高優先のマスター在→降格（自分の反射は同値で降りない）
-    is_master=false; own_prio=0; tgl_req=false        -- 横取り後の再取得は OFF→ON 必須
+  if is_master and in_prio>own_prio+1e-6 then         -- 高優先在→降格
+    is_master=false; own_prio=0; tgl_req=false        -- 再取得は OFF→ON 必須
   end
 
-  -- 自車から両側へ流すフラッド値（マスター=満タン再供給 / 中継=live を1減衰 / 尽きたら消滅）
+  -- 両側へフラッド（マスター=満タン / 中継=live-1）
   local out_prio,out_live
   if is_master then out_prio,out_live=own_prio,HOPS
   elseif in_prio>0 and in_live>1 then out_prio,out_live=in_prio,in_live-1
   else out_prio,out_live=0,0 end
   master_present=is_master or out_prio>0
-  -- 指令パケットを取り込む側（生存マスターが来ている側）
   local src=(not is_master) and (in_front and rxf or rxb) or nil
 
   -- M5 GFF 導出 ★中核★
@@ -151,8 +146,7 @@ function onTick()
 
   -- M6 指令パケット生成・中継
   local p
-  if car_type=="DEAD" then
-    -- クロス中継（優先度フラッドも交差して通過）
+  if car_type=="DEAD" then                            -- クロス中継
     write_frame(F,rxb, b_alive and rxb.prio or 0, b_alive and rxb.live-1 or 0)
     write_frame(B,rxf, f_alive and rxf.prio or 0, f_alive and rxf.live-1 or 0)
   else
@@ -189,6 +183,5 @@ function onTick()
   output.setBool(CB_LRD,tgl_rdoor); output.setBool(CB_LLD,tgl_ldoor); output.setBool(CB_LRM,tgl_room)
   output.setBool(CB_ISM,is_master); output.setBool(CB_BACK,tgl_back)
 
-  -- 立ち上がり検出用の前ティック状態を更新（取得/解放を OFF→ON / ON→OFF の1ティックに限定）
   prev_tgl_req=tgl_req
 end
